@@ -1,9 +1,9 @@
+#ifndef __CONFIG_H
+#define __CONFIG_H
+
 // Firmware version
 #define VERSION "v4.5.0" //20230729
 #define VERSION_NUM 422
-
-// Type of MOSFET
-#define P_MOSFET // P_MOSFET or N_MOSFET
 
 // Type of OLED Controller
 // #define SSD1306
@@ -22,15 +22,6 @@
 #define BUTTON_PIN        0     // switch 按键right
 #define BUTTON_P_PIN      4     // 1 键位为“+”
 #define BUTTON_N_PIN      2     // 2 键位为“-”
-#define CONTROL_PIN       5     // heater MOSFET PWM control 加热器MOSFET PWM控制
-#define CONTROL_CHANNEL   2     // PWM channel
-#define CONTROL_FREQ      200   // PWM frequency
-#define CONTROL_FREQ_20V  1000  // PWM frequency for 20V
-#define CONTROL_RES       8     // PWM resolution
-
-#define PD_CFG_0          16
-#define PD_CFG_1          17
-#define PD_CFG_2          18
 
 // 默认温度控制值(推荐焊接温度:300~380°C)
 #define TEMP_MIN          50    // 最小温度
@@ -72,21 +63,10 @@
 // EEPROM identifier
 #define EEPROM_SIZE       1024
 
-// MOSFET control definitions
-#if defined(P_MOSFET)           // P-Channel MOSFET
-#define HEATER_ON         255
-#define HEATER_OFF        0
-#define HEATER_PWM        255 - Output
-#elif defined(N_MOSFET)         // N-Channel MOSFET
-#define HEATER_ON         0
-#define HEATER_OFF        255
-#define HEATER_PWM        Output
-#else
-#error Wrong MOSFET type!
-#endif
-
 //Language
 #define DEFAULT_LANGUAGE  0
 
 //Hand side
 #define DEFAULT_HAND_SIDE 0
+
+#endif

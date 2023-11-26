@@ -1,18 +1,16 @@
+#include <esp32-hal.h>
+
 //
 #include "config.h"
 
 //
 #include <Button2.h>
-#include <QC3Control.h>
 
 //
 #include "FirmwareMSC.h"
 #include "Languages.h"
 #include "USB.h"
 #include "UtilsEEPROM.h"
-
-QC3Control QC(14, 13);
-// QC.set12V();
 
 #include <U8g2lib.h>  // https://github.com/olikraus/u8g2
 // font
@@ -47,6 +45,15 @@ QC3Control QC(14, 13);
 // #if defined(LIS)
 #include "SparkFun_LIS2DH12.h"  //Click here to get the library: http://librarymanager/All#SparkFun_LIS2DH12
 SPARKFUN_LIS2DH12 accel;  // Create instance
+
+
+
+
+
+#include "power.h"
+#include "heater.h"
+
+
 
 /*#else
   #error Wrong SENSOR type!
@@ -157,10 +164,6 @@ Button2 btn;
 float limit = 0.0;
 
 void setup() {
-  digitalWrite(PD_CFG_0, LOW);
-  digitalWrite(PD_CFG_1, HIGH);
-  digitalWrite(PD_CFG_2, LOW);
-
   Serial.begin(115200);
 
   adc_sensor.attach(SENSOR_PIN);
@@ -180,35 +183,7 @@ void setup() {
   }
   getEEPROM();
 
-  pinMode(PD_CFG_0, OUTPUT);
-  pinMode(PD_CFG_1, OUTPUT);
-  pinMode(PD_CFG_2, OUTPUT);
-
-  if (QCEnable) {
-    QC.begin();
-    delay(100);
-    switch (VoltageValue) {
-      case 0: {
-        QC.set9V();
-      } break;
-      case 1: {
-        QC.set12V();
-      } break;
-      case 2: {
-        QC.set12V();
-      } break;
-      case 3: {
-        QC.set20V();
-      } break;
-      case 4: {
-        QC.set20V();
-      } break;
-      default:
-        break;
-    }
-  }
-
-  PD_Update();
+  Power_Init(QCEnable, VoltageValue);
 
   // read supply voltages in mV 以mV为单位读取电源电压
   delay(100);
@@ -227,7 +202,7 @@ void setup() {
     limit = POWER_LIMIT_15;
   }
   if (((CurrentTemp + 20) < DefaultTemp) && !inLockMode)
-    ledcWrite(CONTROL_CHANNEL, constrain(HEATER_ON, 0, limit));
+    Heater_SetPower(constrain(HEATER_ON, 0, limit));
 
   // set PID output range and start the PID
   // 设置PID输出范围，启动PID
@@ -353,12 +328,8 @@ void SLEEPCheck() {
         if (VoltageValue < 3) {
           limit = POWER_LIMIT_15;
         }
-        if ((CurrentTemp + 20) <
-            SetTemp)  // if temp is well below setpoint 如果温度远低于设定值
-          ledcWrite(
-              CONTROL_CHANNEL,
-              constrain(HEATER_ON, 0, limit));  // then start the heater right
-                                                // now 那现在就启动加热器
+        if ((CurrentTemp + 20) < SetTemp)  // if temp is well below setpoint 如果温度远低于设定值
+            Heater_SetPower(constrain(HEATER_ON, 0, limit)); // then start the heater right now
         beep();              // beep on wake-up
         beepIfWorky = true;  // beep again when working temperature is reached
                              // 当达到工作温度，会发出蜂鸣声
@@ -424,9 +395,8 @@ void SENSORCheck() {
 
   // #endif
 
-  ledcWrite(CONTROL_CHANNEL,
-            HEATER_OFF);  // shut off heater in order to measure
-                          // temperature 关闭加热器以测量温度
+  Heater_Off(); // shut off heater in order to measure temperature 关闭加热器以测量温度
+
   if (VoltageValue == 3) {
     delayMicroseconds(TIME2SETTLE_20V);
   } else {
@@ -444,9 +414,7 @@ void SENSORCheck() {
     if (VoltageValue < 3) {
       limit = POWER_LIMIT_15;
     }
-    ledcWrite(CONTROL_CHANNEL,
-              constrain(HEATER_PWM, 0,
-                        limit));  // turn on again heater 再次打开加热器
+    Heater_SetPower(constrain(HEATER_PWM, 0, limit)); // turn on again heater 再次打开加热器
   }
 
   RawTemp += (temp - RawTemp) *
@@ -478,7 +446,7 @@ void SENSORCheck() {
   if (ShowTemp > 500) TipIsPresent = false;  // tip removed ? 烙铁头移除？
   if (!TipIsPresent &&
       (ShowTemp < 500)) {  // new tip inserted ? 新的烙铁头插入？
-    ledcWrite(CONTROL_CHANNEL, HEATER_OFF);  // shut off heater 关闭加热器
+    Heater_Off(); // shut off heater 关闭加热器
     beep();                                  // beep for info
     TipIsPresent = true;  // tip is present now 烙铁头已经存在
     ChangeTipScreen();  // show tip selection screen 显示烙铁头选择屏幕
@@ -546,8 +514,7 @@ void Thermostat() {
   } else if(VoltageValue == 3){
     limit = POWER_LIMIT_20_2;
   }
-  ledcWrite(CONTROL_CHANNEL,
-            constrain((HEATER_PWM), 0, limit));  // set heater PWM 设置加热器PWM
+  Heater_SetPower(constrain((HEATER_PWM), 0, limit));   // set heater PWM 设置加热器PWM
 }
 
 // creates a short beep on the buzzer 在蜂鸣器上创建一个短的哔哔声
@@ -652,7 +619,7 @@ void MainScreen() {
 
 // setup screen 设置屏幕
 void SetupScreen() {
-  ledcWrite(CONTROL_CHANNEL, HEATER_OFF);  // shut off heater
+  Heater_Off();  // shut off heater
   beep();
   uint16_t SaveSetTemp = SetTemp;
   uint8_t selection = 0;
@@ -681,7 +648,7 @@ void SetupScreen() {
       case 5:
         VoltageValue =
             MenuScreen(VoltageItems, sizeof(VoltageItems), VoltageValue);
-        PD_Update();
+        Power_PDConfig(VoltageValue);
         break;
       case 6:
         QCEnable = MenuScreen(QCItems, sizeof(QCItems), QCEnable);
@@ -1063,7 +1030,7 @@ void CalibrationScreen() {
     delay(10);
   }
 
-  ledcWrite(CONTROL_CHANNEL, HEATER_OFF);  // shut off heater 关闭加热器
+  Heater_Off();  // shut off heater 关闭加热器
   if (VoltageValue == 3) {
     delayMicroseconds(TIME2SETTLE_20V);
   } else {
@@ -1297,50 +1264,6 @@ void Button_loop() {
   }
 }
 
-void PD_Update() {
-  switch (VoltageValue) {
-    case 0: {
-      digitalWrite(PD_CFG_0, LOW);
-      digitalWrite(PD_CFG_1, LOW);
-      digitalWrite(PD_CFG_2, LOW);
-    } break;
-    case 1: {
-      digitalWrite(PD_CFG_0, LOW);
-      digitalWrite(PD_CFG_1, LOW);
-      digitalWrite(PD_CFG_2, HIGH);
-    } break;
-    case 2: {
-      digitalWrite(PD_CFG_0, LOW);
-      digitalWrite(PD_CFG_1, HIGH);
-      digitalWrite(PD_CFG_2, HIGH);
-    } break;
-    case 3: {
-      digitalWrite(PD_CFG_0, LOW);
-      digitalWrite(PD_CFG_1, HIGH);
-      digitalWrite(PD_CFG_2, LOW);
-    } break;
-    case 4: {
-      digitalWrite(PD_CFG_0, LOW);
-      digitalWrite(PD_CFG_1, HIGH);
-      digitalWrite(PD_CFG_2, LOW);
-    } break;
-    default:
-      break;
-  }
-
-  if (VoltageValue == 3) {
-    ledcSetup(CONTROL_CHANNEL, CONTROL_FREQ_20V, CONTROL_RES);
-  } else {
-    ledcSetup(CONTROL_CHANNEL, CONTROL_FREQ, CONTROL_RES);
-  }
-
-  ledcAttachPin(CONTROL_PIN, CONTROL_CHANNEL);
-
-  // analogWrite(CONTROL_PIN, HEATER_OFF); // this shuts off the
-  // heater这是用来关闭加热器的
-  ledcWrite(CONTROL_CHANNEL, HEATER_OFF);
-}
-
 static void usbEventCallback(void *arg, esp_event_base_t event_base,
                              int32_t event_id, void *event_data) {
   if (event_base == ARDUINO_USB_EVENTS) {
@@ -1434,7 +1357,5 @@ void heatWithLimit() {
   } else if (VoltageValue == 3) {
     limit = POWER_LIMIT_20;
   }
-  ledcWrite(
-      CONTROL_CHANNEL,
-      constrain(HEATER_PWM, 0, limit));  // turn on again heater 再次打开加热器
+  Heater_SetPower(constrain(HEATER_PWM, 0, limit));  // turn on again heater 再次打开加热器
 }
