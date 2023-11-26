@@ -161,42 +161,18 @@ void setup() {
   digitalWrite(PD_CFG_1, HIGH);
   digitalWrite(PD_CFG_2, LOW);
 
-  // pinMode(14, INPUT);
-  // pinMode(13, INPUT);
-  // QC.set12V();
   Serial.begin(115200);
-  // delay(5000);
 
-  //  analogSetAttenuation(ADC_11db);
-  //  vref_adc0 = calibrate_adc(ADC_UNIT_1, (adc_atten_t)ADC1_CHANNEL_5);
-  //  vref_adc1 = calibrate_adc(ADC_UNIT_2, (adc_atten_t)ADC2_CHANNEL_9);
   adc_sensor.attach(SENSOR_PIN);
   adc_vin.attach(VIN_PIN);
 
-  /*#if defined(MPU)
-    mpu6050.begin();
-    mpu6050.calcGyroOffsets(true);*/
-
-  // #endif
-
   // set the pin modes 设置引脚模式
   pinMode(SENSOR_PIN, INPUT_PULLUP);
-  // pinMode(VIN_PIN, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-  // pinMode(CONTROL_PIN, OUTPUT);
   pinMode(BUTTON_P_PIN, INPUT_PULLUP);
   pinMode(BUTTON_N_PIN, INPUT_PULLUP);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  // digitalWrite(BUZZER_PIN, LOW);        // must be LOW when buzzer not in
-  // use当蜂鸣器不使用时，必须是低电平
-
-  // get default values from EEPROM 从EEPROM获取默认值
-  //  if (!EEPROM.begin(EEPROM_SIZE))
-  //  {
-  //    Serial.println("failed to initialise EEPROM");
-  //    delay(100);
-  //  }
   init_EEPROM();
   if (digitalRead(BUTTON_P_PIN) == LOW && digitalRead(BUTTON_N_PIN) == LOW &&
       digitalRead(BUTTON_PIN) == HIGH) {
@@ -259,7 +235,6 @@ void setup() {
   ctrl.SetMode(AUTOMATIC);
 
   // set initial rotary encoder values 设置旋转编码器的初始值
-  // a0 = PINB & 1; b0 = PIND >> 7 & 1; ab0 = (a0 == b0);
   a0 = 0;
   b0 = 0;
   setRotary(TEMP_MIN, TEMP_MAX, TEMP_STEP, DefaultTemp);
@@ -270,21 +245,13 @@ void setup() {
   // long beep for setup completion 安装完成时长哔哔声
   beep();
   beep();
-  //  delay(2000);
   Serial.println("Soldering Pen");
-  // #elif defined(LIS)
-  //   u8g2.setBusClock(100000);
   Wire.begin();
   Wire.setClock(400000);
   if (accel.begin() == false) {
     delay(500);
     Serial.println("Accelerometer not detected.");
   }
-  // lis2dh12_block_data_update_set(&(accel.dev_ctx), PROPERTY_DISABLE);
-  // accel.setScale(LIS2DH12_2g);
-  // accel.setMode(LIS2DH12_HR_12bit);
-  // accel.setDataRate(LIS2DH12_ODR_400Hz);
-  // lis2dh12_fifo_mode_set(&(accel.dev_ctx), LIS2DH12_BYPASS_MODE);
 
   ChipTemp = getChipTemp();
   lastSENSORTmp = getMPUTemp();
@@ -296,37 +263,25 @@ void setup() {
   }else{
     u8g2.setDisplayRotation(U8G2_R1);
   }
-
-
-  // btn.begin(BUTTON_PIN);
-  // btn.setDoubleClickHandler(turnOffHeater);
-  // btn.setDebounceTime(25);
 }
 
 int SENSORCheckTimes = 0;
-long lastMillis = 0;
 
 void loop() {
-  long timems = millis();
   ROTARYCheck();  // check rotary encoder (temp/boost setting, enter setup menu)
                   // 检查旋转编码器(温度/升压设置，进入设置菜单)
   SLEEPCheck();  // check and activate/deactivate sleep modes
                  // 检查和激活/关闭睡眠模式
 
   if (SENSORCheckTimes > 1) {
-    // long timems = millis();
     SENSORCheck();  // reads temperature and vibration switch of the iron
                     // 读取烙铁头的温度和振动开关
-    // lastMillis = millis() - timems;
-    // Serial.println(lastMillis);
     SENSORCheckTimes = 0;
   }
   SENSORCheckTimes++;
 
   Thermostat();  // heater control 加热器控制
   MainScreen();  // updates the main page on the OLED 刷新OLED主界面
-  lastMillis = millis() - timems;
-  Serial.println(lastMillis);
 }
 
 // check rotary encoder; set temperature, toggle boost mode, enter setup menu
@@ -410,7 +365,6 @@ void SLEEPCheck() {
       }
       handleMoved = false;  // reset handleMoved flag
       inSleepMode = false;  // reset sleep flag
-      //      inOffMode = false;      // reset off flag
       sleepmillis = millis();  // reset sleep timer
     }
 
@@ -431,45 +385,11 @@ void SLEEPCheck() {
 // reads temperature, vibration switch and supply voltages
 // 读取温度，振动开关和电源电压
 void SENSORCheck() {
-  /*#if defined(MPU)
-    mpu6050.update();
-    if (abs(mpu6050.getGyroX() - gx) > WAKEUP_THRESHOLD ||
-    abs(mpu6050.getGyroY() - gy) > WAKEUP_THRESHOLD || abs(mpu6050.getGyroZ() -
-    gz) > WAKEUP_THRESHOLD)
-    {
-      gx = mpu6050.getGyroX();
-      gy = mpu6050.getGyroY();
-      gz = mpu6050.getGyroZ();
-      handleMoved = true;
-      Serial.println("进入工作状态!");
-    }*/
-  // #if defined(LIS)
-
-  // if (abs(accel.getX() - gx) > WAKEUPthreshold ||
-  //     abs(accel.getY() - gy) > WAKEUPthreshold ||
-  //     abs(accel.getZ() - gz) > WAKEUPthreshold) {
-  //   gx = accel.getX();
-  //   gy = accel.getY();
-  //   gz = accel.getZ();
-  //   handleMoved = true;
-  //   //    Serial.println("进入工作状态!");
-  // }
-
-  // accel.getRawX() return int16_t
-
   if (accel.available()) {
     accels[accelIndex][0] = accel.getRawX() + 32768;
     accels[accelIndex][1] = accel.getRawY() + 32768;
     accels[accelIndex][2] = accel.getRawZ() + 32768;
     accelIndex++;
-
-    // debug output
-    // Serial.print("X: ");
-    // Serial.print(accels[accelIndex][0]);
-    // Serial.print(" Y: ");
-    // Serial.print(accels[accelIndex][1]);
-    // Serial.print(" Z: ");
-    // Serial.println(accels[accelIndex][2]);
 
     if (accelIndex >= ACCEL_SAMPLES) {
       accelIndex = 0;
@@ -492,20 +412,12 @@ void SENSORCheck() {
       var[0] /= ACCEL_SAMPLES;
       var[1] /= ACCEL_SAMPLES;
       var[2] /= ACCEL_SAMPLES;
-      // debug output
-      // Serial.print("variance: ");
-      // Serial.print(var[0]);
-      // Serial.print(" ");
-      // Serial.print(var[1]);
-      // Serial.print(" ");
-      // Serial.println(var[2]);
 
       int varThreshold = WAKEUPthreshold * 10000;
 
       if (var[0] > varThreshold || var[1] > varThreshold ||
           var[2] > varThreshold) {
         handleMoved = true;
-        //      Serial.println("进入工作状态!");
       }
     }
   }
@@ -520,10 +432,7 @@ void SENSORCheck() {
   } else {
     delayMicroseconds(TIME2SETTLE);  // wait for voltage to settle 等待电压稳定
   }
-  long timems = millis();
   double temp = denoiseAnalog(SENSOR_PIN);  // 读取ADC值的温度
-  lastMillis = millis() - timems;
-  // Serial.println(lastMillis);
 
   if (SensorCounter++ > 10) {
     Vin = getVIN();  // get Vin every now and then 时不时去获取VIN电压
@@ -679,12 +588,9 @@ void updateEEPROM() { update_EEPROM(); }
 void MainScreen() {
   u8g2.firstPage();
   do {
-    // u8g2.setCursor(0, 0);
-    // u8g2.print(F("nihao"));
     //  draw setpoint temperature
     u8g2.setFont(PTS200_16);
     u8g2.setFontPosTop();
-    //    u8g2.drawUTF8(0, 0 + SCREEN_OFFSET, "设温:");
     u8g2.drawUTF8(0, 0 + SCREEN_OFFSET, txt_set_temp[language]);
     u8g2.setCursor(40, 0 + SCREEN_OFFSET);
     u8g2.print(Setpoint, 0);
@@ -765,9 +671,6 @@ void SetupScreen() {
       case 2: {
         TimerScreen();
       } break;
-        //      case 3:
-        //        PIDenable = MenuScreen(ControlTypeItems,
-        //        sizeof(ControlTypeItems), PIDenable); break;
       case 3: {
         MainScrType =
             MenuScreen(MainScreenItems, sizeof(MainScreenItems), MainScrType);
@@ -1054,8 +957,6 @@ void InfoScreen() {
       u8g2.setCursor(0, 16 * 2 + SCREEN_OFFSET);
       u8g2.print(txt_Version[language]);
       u8g2.print(VERSION);
-      // u8g2.setCursor(0, 48); u8g2.print(F("IMU:  "));
-      // u8g2.print(accelerometer[1], DEC); u8g2.print(F(""));
     } while (u8g2.nextPage());
     if (lastbutton && digitalRead(BUTTON_PIN)) {
       delay(10);
@@ -1287,10 +1188,6 @@ uint16_t denoiseAnalog(byte port) {
     result += resultArray[i];
   }
 
-  //  Serial.printf("raw_val: %d", adc_sensor.readMiliVolts());
-  //  Serial.println();
-  // Serial.printf("val: %d", result / 4);
-  // Serial.println();
   return (result / 4);  // devide by 32 and return value 除以32并返回值
 }
 
@@ -1333,34 +1230,9 @@ uint16_t getVIN() {
 
   value = (result / 4);
 
-  //  // VIN_Ru = 100k, Rd_GND = 3.3K
-  //  if (value < 500)
-  //  {
-  //    voltage = value * 1390 * 31.3 / 4095 * 1.35;
-  //  }
-  //  else if (500 <= value && value < 1000)
-  //  {
-  //    voltage = value * 1390 * 31.3 / 4095 * 1.135;
-  //  }
-  //  else if (1000 <= value && value < 1500)
-  //  {
-  //    voltage = value * 1390 * 31.3 / 4095 * 1.071;
-  //  }
-  //  else if (1500 <= value && value < 2000)
-  //  {
-  //    voltage = value * 1390 * 31.3 / 4095;
-  //  }
-  //  else if (2000 <= value && value < 3000)
-  //  {
-  //    voltage = value * 1390 * 31.3 / 4095;
-  //  }
-  //  else
-  //    voltage = value * 1390 * 31.3 / 4095;
-
   voltage = value * 31.3;
 
   return voltage;
-  // return value;
 }
 
 int32_t variance(int16_t a[]) {
@@ -1472,10 +1344,8 @@ void PD_Update() {
 static void usbEventCallback(void *arg, esp_event_base_t event_base,
                              int32_t event_id, void *event_data) {
   if (event_base == ARDUINO_USB_EVENTS) {
-    // arduino_usb_event_data_t* data = (arduino_usb_event_data_t*)event_data;
     switch (event_id) {
       case ARDUINO_USB_STARTED_EVENT:
-        // HWSerial.println("USB PLUGGED");
         u8g2.clearBuffer();                  // clear the internal memory
         u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
         u8g2.drawStr(0, 10,
@@ -1483,7 +1353,6 @@ static void usbEventCallback(void *arg, esp_event_base_t event_base,
         u8g2.sendBuffer();            // transfer internal memory to the display
         break;
       case ARDUINO_USB_STOPPED_EVENT:
-        // HWSerial.println("USB UNPLUGGED");
         u8g2.clearBuffer();                  // clear the internal memory
         u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
         u8g2.drawStr(
@@ -1491,8 +1360,6 @@ static void usbEventCallback(void *arg, esp_event_base_t event_base,
         u8g2.sendBuffer();            // transfer internal memory to the display
         break;
       case ARDUINO_USB_SUSPEND_EVENT:
-        // HWSerial.printf("USB SUSPENDED: remote_wakeup_en: %u\n",
-        // data->suspend.remote_wakeup_en);
         u8g2.clearBuffer();                  // clear the internal memory
         u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
         u8g2.drawStr(
@@ -1500,7 +1367,6 @@ static void usbEventCallback(void *arg, esp_event_base_t event_base,
         u8g2.sendBuffer();            // transfer internal memory to the display
         break;
       case ARDUINO_USB_RESUME_EVENT:
-        // HWSerial.println("USB RESUMED");
         u8g2.clearBuffer();                  // clear the internal memory
         u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
         u8g2.drawStr(0, 10,
@@ -1512,11 +1378,8 @@ static void usbEventCallback(void *arg, esp_event_base_t event_base,
         break;
     }
   } else if (event_base == ARDUINO_FIRMWARE_MSC_EVENTS) {
-    // arduino_firmware_msc_event_data_t* data =
-    // (arduino_firmware_msc_event_data_t*)event_data;
     switch (event_id) {
       case ARDUINO_FIRMWARE_MSC_START_EVENT:
-        // HWSerial.println("MSC Update Start");
         u8g2.clearBuffer();                  // clear the internal memory
         u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
         u8g2.drawStr(
@@ -1525,9 +1388,6 @@ static void usbEventCallback(void *arg, esp_event_base_t event_base,
         u8g2.sendBuffer();        // transfer internal memory to the display
         break;
       case ARDUINO_FIRMWARE_MSC_WRITE_EVENT:
-        // HWSerial.printf("MSC Update Write %u bytes at offset %u\n",
-        // data->write.size, data->write.offset);
-        //  HWSerial.print(".");
         u8g2.clearBuffer();                  // clear the internal memory
         u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
         u8g2.drawStr(0, 10,
@@ -1535,7 +1395,6 @@ static void usbEventCallback(void *arg, esp_event_base_t event_base,
         u8g2.sendBuffer();  // transfer internal memory to the display
         break;
       case ARDUINO_FIRMWARE_MSC_END_EVENT:
-        // HWSerial.printf("\nMSC Update End: %u bytes\n", data->end.size);
         u8g2.clearBuffer();                  // clear the internal memory
         u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
         u8g2.drawStr(
@@ -1543,8 +1402,6 @@ static void usbEventCallback(void *arg, esp_event_base_t event_base,
         u8g2.sendBuffer();  // transfer internal memory to the display
         break;
       case ARDUINO_FIRMWARE_MSC_ERROR_EVENT:
-        // HWSerial.printf("MSC Update ERROR! Progress: %u bytes\n",
-        // data->error.size);
         u8g2.clearBuffer();                  // clear the internal memory
         u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
         u8g2.drawStr(
@@ -1553,9 +1410,6 @@ static void usbEventCallback(void *arg, esp_event_base_t event_base,
         u8g2.sendBuffer();         // transfer internal memory to the display
         break;
       case ARDUINO_FIRMWARE_MSC_POWER_EVENT:
-        // HWSerial.printf("MSC Update Power: power: %u, start: %u, eject: %u",
-        // data->power.power_condition, data->power.start,
-        // data->power.load_eject);
         u8g2.clearBuffer();                  // clear the internal memory
         u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
         u8g2.drawStr(
@@ -1572,29 +1426,7 @@ static void usbEventCallback(void *arg, esp_event_base_t event_base,
 
 void turnOffHeater(Button2 &b) { inOffMode = true; }
 
-// uint16_t calibrate_adc(adc_unit_t adc, adc_atten_t channel) {
-//   uint16_t vref;
-//   esp_adc_cal_characteristics_t adc_chars;
-//   esp_adc_cal_value_t val_type = esp_adc_cal_characterize((adc_unit_t)adc,
-//   (adc_atten_t)channel, (adc_bits_width_t)ADC_WIDTH_BIT_12, 1100,
-//   &adc_chars);
-//   //Check type of calibration value used to characterize ADC
-//   if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF) {
-//     Serial.printf("eFuse Vref:%u mV", adc_chars.vref);
-//     Serial.println();
-//     vref = adc_chars.vref;
-//   } else if (val_type == ESP_ADC_CAL_VAL_EFUSE_TP) {
-//     Serial.printf("Two Point --> coeff_a:%umV coeff_b:%umV\n",
-//     adc_chars.coeff_a, adc_chars.coeff_b); Serial.println();
-//   } else {
-//     Serial.println("Default Vref: 1100mV");
-//   }
-//   return vref;
-// }
-
 void heatWithLimit() {
-  // ledcSetup(channel, hertz, resolution);
-  // ledcAttachPin(pin, channel);
 
   limit = 0;
   if (VoltageValue < 3) {
