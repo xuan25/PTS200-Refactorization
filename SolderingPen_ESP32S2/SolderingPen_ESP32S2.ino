@@ -6,15 +6,11 @@
 //
 #include <Button2.h>
 
-//
-#include "FirmwareMSC.h"
-#include "Languages.h"
+
+
 #include "USB.h"
 #include "UtilsEEPROM.h"
 
-#include <U8g2lib.h>  // https://github.com/olikraus/u8g2
-// font
-#include "PTS200_16.h"
 
 
 // #include<analogWrite.h>
@@ -22,29 +18,21 @@
 
 #include "esp_adc_cal.h"
 
-#ifdef U8X8_HAVE_HW_SPI
-#include <SPI.h>
-#endif
-#ifdef U8X8_HAVE_HW_I2C
+// #ifdef U8X8_HAVE_HW_SPI
+// #include <SPI.h>
+// #endif
+// #ifdef U8X8_HAVE_HW_I2C
+// #include <Wire.h>
+// #endif
+
 #include <Wire.h>
-#endif
 
 #include <PID_v1.h>  // https://github.com/wagiminator/ATmega-Soldering-Station/blob/master/software/libraries/Arduino-PID-Library.zip
 // (old cpp version of
 // https://github.com/mblythe86/C-PID-Library/tree/master/PID_v1)
 #include <EEPROM.h>  // 用于将用户设置存储到EEPROM
 
-// 选择加速度计芯片
-// #define MPU
-#define LIS
 
-/*#if defined(MPU)
-  #include <MPU6050_tockn.h> //https://github.com/tockn/MPU6050_tockn
-  MPU6050 mpu6050(Wire);*/
-
-// #if defined(LIS)
-#include "SparkFun_LIS2DH12.h"  //Click here to get the library: http://librarymanager/All#SparkFun_LIS2DH12
-SPARKFUN_LIS2DH12 accel;  // Create instance
 
 
 
@@ -52,6 +40,9 @@ SPARKFUN_LIS2DH12 accel;  // Create instance
 
 #include "power.h"
 #include "heater.h"
+#include "utils.h"
+#include "accel.h"
+#include "menu.h"
 
 
 
@@ -78,7 +69,7 @@ uint8_t timeOfBoost = TIMEOFBOOST;
 uint8_t MainScrType = MAINSCREEN;
 bool PIDenable = PID_ENABLE;
 bool beepEnable = BEEP_ENABLE;
-volatile uint8_t VoltageValue = VOLTAGE_VALUE;
+uint8_t VoltageValue = VOLTAGE_VALUE;
 bool QCEnable = QC_ENABLE;
 uint8_t WAKEUPthreshold = WAKEUP_THRESHOLD;
 bool restore_default_config = false;
@@ -90,14 +81,13 @@ uint8_t CurrentTip = 0;
 uint8_t NumberOfTips = 1;
 
 // Variables for pin change interrupt 引脚更改中断的变量
-volatile uint8_t a0, b0, c0, d0;
+volatile uint8_t c0, d0;
 volatile bool ab0;
-volatile int count, countMin, countMax, countStep;
 volatile bool handleMoved;
 
 // Variables for temperature control 温度控制变量
 uint16_t SetTemp, ShowTemp, gap, Step;
-double Input, Output, Setpoint, RawTemp, CurrentTemp, ChipTemp;
+double Input, Output, Setpoint, RawTemp, CurrentTemp;
 
 // Variables for voltage readings 电压读数变量
 uint16_t Vcc, Vin;
@@ -125,38 +115,20 @@ uint8_t SensorCounter = 0;
 // 指定变量指针和初始PID调优参数
 PID ctrl(&Input, &Output, &Setpoint, aggKp, aggKi, aggKd, REVERSE);
 
-// Setup u8g object depending on OLED controller
-// 根据OLED控制器设置u8g对象
-#if defined(SSD1306)
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/U8X8_PIN_NONE,
-                                         /* clock=*/22, /* data=*/21);
-#elif defined(SH1107)
-U8G2_SH1107_64X128_F_HW_I2C u8g2(U8G2_R1, 7);
-#else
-#error Wrong OLED controller type!
-#endif
-
 // Buffer for drawUTF8
 char F_Buffer[20];
 
-float lastSENSORTmp = 0;
 float newSENSORTmp = 0;
-uint8_t SENSORTmpTime = 0;
 
 // ADC Calibrate
 uint16_t vref_adc0, vref_adc1;
 ESP32AnalogRead adc_sensor;
-ESP32AnalogRead adc_vin;
 
 // Language
 uint8_t language = 0;
 
 // Hand Side
 uint8_t hand_side = 0;
-
-// MSC Firmware
-FirmwareMSC MSC_Update;
-bool MSC_Updating_Flag = false;
 
 // Button2 Obj
 Button2 btn;
@@ -167,18 +139,16 @@ void setup() {
   Serial.begin(115200);
 
   adc_sensor.attach(SENSOR_PIN);
-  adc_vin.attach(VIN_PIN);
+  Vin_Init();
 
   // set the pin modes 设置引脚模式
   pinMode(SENSOR_PIN, INPUT_PULLUP);
-  pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(BUTTON_P_PIN, INPUT_PULLUP);
-  pinMode(BUTTON_N_PIN, INPUT_PULLUP);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  initBuzzer();
+  initButton();
 
   init_EEPROM();
-  if (digitalRead(BUTTON_P_PIN) == LOW && digitalRead(BUTTON_N_PIN) == LOW &&
-      digitalRead(BUTTON_PIN) == HIGH) {
+  if (readButtonP() == BUTTON_RELEASED && readButtonN() == BUTTON_PRESSED &&
+      readButtonM() == BUTTON_RELEASED) {
     write_default_EEPROM();
   }
   getEEPROM();
@@ -210,8 +180,7 @@ void setup() {
   ctrl.SetMode(AUTOMATIC);
 
   // set initial rotary encoder values 设置旋转编码器的初始值
-  a0 = 0;
-  b0 = 0;
+  initRotary();
   setRotary(TEMP_MIN, TEMP_MAX, TEMP_STEP, DefaultTemp);
 
   // reset sleep timer 睡眠定时器重置
@@ -228,16 +197,7 @@ void setup() {
     Serial.println("Accelerometer not detected.");
   }
 
-  ChipTemp = getChipTemp();
-  lastSENSORTmp = getMPUTemp();
-  u8g2.initDisplay();
-  u8g2.begin();
-  u8g2.enableUTF8Print();
-  if(hand_side){
-    u8g2.setDisplayRotation(U8G2_R3);
-  }else{
-    u8g2.setDisplayRotation(U8G2_R1);
-  }
+  Menu_Init(hand_side);
 }
 
 int SENSORCheckTimes = 0;
@@ -256,7 +216,7 @@ void loop() {
   SENSORCheckTimes++;
 
   Thermostat();  // heater control 加热器控制
-  MainScreen();  // updates the main page on the OLED 刷新OLED主界面
+  MainScreen(language, Setpoint, ShowTemp, inOffMode, inLockMode, inSleepMode, inBoostMode, isWorky, Output, MainScrType, Vin, newSENSORTmp);  // updates the main page on the OLED 刷新OLED主界面
 }
 
 // check rotary encoder; set temperature, toggle boost mode, enter setup menu
@@ -266,24 +226,31 @@ void ROTARYCheck() {
   // 根据旋转编码器值设定工作温度
   SetTemp = getRotary();
 
-  uint8_t c = digitalRead(BUTTON_PIN);
+  uint8_t c = readButtonM();
   if (!c && c0) {
     delay(10);
-    if (digitalRead(BUTTON_PIN) == c) {
+    if (readButtonM() == c) {
       beep();
       buttonmillis = millis();
       delay(10);
-      while ((!digitalRead(BUTTON_PIN)) && ((millis() - buttonmillis) < 500))
+      while ((!readButtonM()) && ((millis() - buttonmillis) < 500))
         ;
       delay(10);
       if ((millis() - buttonmillis) >= 500) {
-        SetupScreen();
+        Heater_Off();  // shut off heater
+        beep();
+        SetupScreen(&SetTemp, &MainScrType, &VoltageValue, &QCEnable, 
+            &beepEnable, &restore_default_config, &language, &hand_side, 
+            TipName, CalTemp);
+        updateEEPROM();
+        handleMoved = true;
+        setRotary(TEMP_MIN, TEMP_MAX, TEMP_STEP, SetTemp);
       } else {
         if (inLockMode) {
           inLockMode = false;
         } else {
           buttonmillis = millis();
-          while ((digitalRead(BUTTON_PIN)) && ((millis() - buttonmillis) < 200))
+          while ((readButtonM()) && ((millis() - buttonmillis) < 200))
             delay(10);
           if ((millis() - buttonmillis) >= 200) {  // single click
             if (inOffMode) {
@@ -322,7 +289,7 @@ void SLEEPCheck() {
     ;
   } else {
     if (handleMoved) {  // if handle was moved 如果手柄被移动
-      u8g2.setPowerSave(0);
+      Display_SetPowerSave(0);
       if (inSleepMode) {  // in sleep or off mode? 在睡眠模式还是关机模式?
         limit = POWER_LIMIT_20;
         if (VoltageValue < 3) {
@@ -347,7 +314,7 @@ void SLEEPCheck() {
     } else if ((!inOffMode) && (time2off > 0) &&
                ((goneSeconds / 60) >= time2off)) {
       inOffMode = true;
-      u8g2.setPowerSave(1);
+      Display_SetPowerSave(1);
       beep();
     }
   }
@@ -449,7 +416,7 @@ void SENSORCheck() {
     Heater_Off(); // shut off heater 关闭加热器
     beep();                                  // beep for info
     TipIsPresent = true;  // tip is present now 烙铁头已经存在
-    ChangeTipScreen();  // show tip selection screen 显示烙铁头选择屏幕
+    ChangeTipScreen(TipName, CalTemp);  // show tip selection screen 显示烙铁头选择屏幕
     updateEEPROM();     // update setting in EEPROM EEPROM的更新设置
     handleMoved = true;  // reset all timers 重置所有计时器
     RawTemp = denoiseAnalog(
@@ -517,31 +484,7 @@ void Thermostat() {
   Heater_SetPower(constrain((HEATER_PWM), 0, limit));   // set heater PWM 设置加热器PWM
 }
 
-// creates a short beep on the buzzer 在蜂鸣器上创建一个短的哔哔声
-void beep() {
-  if (beepEnable) {
-    for (uint8_t i = 0; i < 255; i++) {
-      digitalWrite(BUZZER_PIN, HIGH);
-      delayMicroseconds(125);
-      digitalWrite(BUZZER_PIN, LOW);
-      delayMicroseconds(125);
-    }
-  }
-}
 
-// sets start values for rotary encoder 设置旋转编码器的起始值
-void setRotary(int rmin, int rmax, int rstep, int rvalue) {
-  countMin = rmin << ROTARY_TYPE;
-  countMax = rmax << ROTARY_TYPE;
-  countStep = rstep;
-  count = rvalue << ROTARY_TYPE;
-}
-
-// reads current rotary encoder value 读取当前旋转编码器值
-int getRotary() {
-  Button_loop();
-  return (count >> ROTARY_TYPE);
-}
 
 // reads user settings from EEPROM; if EEPROM values are invalid, write defaults
 // 从EEPROM读取用户设置;如果EEPROM值无效，则写入默认值
@@ -550,576 +493,6 @@ void getEEPROM() { read_EEPROM(); }
 // writes user settings to EEPROM using updade function to minimize write cycles
 // 使用升级功能将用户设置写入EEPROM，以最小化写入周期
 void updateEEPROM() { update_EEPROM(); }
-
-// draws the main screen 绘制主屏幕
-void MainScreen() {
-  u8g2.firstPage();
-  do {
-    //  draw setpoint temperature
-    u8g2.setFont(PTS200_16);
-    u8g2.setFontPosTop();
-    u8g2.drawUTF8(0, 0 + SCREEN_OFFSET, txt_set_temp[language]);
-    u8g2.setCursor(40, 0 + SCREEN_OFFSET);
-    u8g2.print(Setpoint, 0);
-
-    // draw status of heater 绘制加热器状态
-    u8g2.setCursor(96, 0 + SCREEN_OFFSET);
-    if (ShowTemp > 500)
-      u8g2.print(txt_error[language]);
-    else if (inOffMode || inLockMode)
-      u8g2.print(txt_off[language]);
-    else if (inSleepMode)
-      u8g2.print(txt_sleep[language]);
-    else if (inBoostMode)
-      u8g2.print(txt_boost[language]);
-    else if (isWorky)
-      u8g2.print(txt_worky[language]);
-    else if (Output < 180)
-      u8g2.print(txt_on[language]);
-    else
-      u8g2.print(txt_hold[language]);
-
-    // rest depending on main screen type 休息取决于主屏幕类型
-    if (MainScrType) {
-      // draw current tip and input voltage 绘制当前烙铁头及输入电压
-      float fVin = (float)Vin / 1000;  // convert mv in V
-      newSENSORTmp = newSENSORTmp + 0.01 * getMPUTemp();
-      SENSORTmpTime++;
-      if (SENSORTmpTime >= 100) {
-        lastSENSORTmp = newSENSORTmp;
-        newSENSORTmp = 0;
-        SENSORTmpTime = 0;
-      }
-      u8g2.setCursor(0, 50);
-      u8g2.print(lastSENSORTmp, 1);
-      u8g2.print(F("C"));
-      u8g2.setCursor(83, 50);
-      u8g2.print(fVin, 1);
-      u8g2.print(F("V"));
-      // draw current temperature 绘制当前温度
-      u8g2.setFont(u8g2_font_freedoomr25_tn);
-      u8g2.setFontPosTop();
-      u8g2.setCursor(37, 18);
-      if (ShowTemp > 500)
-        u8g2.print(F("000"));
-      else
-        u8g2.printf("%03d", ShowTemp);
-    } else {
-      // draw current temperature in big figures 用大数字绘制当前温度
-      u8g2.setFont(u8g2_font_fub42_tn);
-      u8g2.setFontPosTop();
-      u8g2.setCursor(15, 20);
-      if (ShowTemp > 500)
-        u8g2.print(F("000"));
-      else
-        u8g2.printf("%03d", ShowTemp);
-    }
-  } while (u8g2.nextPage());
-}
-
-// setup screen 设置屏幕
-void SetupScreen() {
-  Heater_Off();  // shut off heater
-  beep();
-  uint16_t SaveSetTemp = SetTemp;
-  uint8_t selection = 0;
-  bool repeat = true;
-
-  while (repeat) {
-    selection = MenuScreen(SetupItems, sizeof(SetupItems), selection);
-    switch (selection) {
-      case 0: {
-        TipScreen();
-        repeat = false;
-      } break;
-      case 1: {
-        TempScreen();
-      } break;
-      case 2: {
-        TimerScreen();
-      } break;
-      case 3: {
-        MainScrType =
-            MenuScreen(MainScreenItems, sizeof(MainScreenItems), MainScrType);
-      } break;
-      case 4: {
-        InfoScreen();
-      } break;
-      case 5:
-        VoltageValue =
-            MenuScreen(VoltageItems, sizeof(VoltageItems), VoltageValue);
-        Power_PDConfig(VoltageValue);
-        break;
-      case 6:
-        QCEnable = MenuScreen(QCItems, sizeof(QCItems), QCEnable);
-        break;
-      case 7:
-        beepEnable = MenuScreen(BuzzerItems, sizeof(BuzzerItems), beepEnable);
-        break;
-      case 8: {
-        restore_default_config = MenuScreen(DefaultItems, sizeof(DefaultItems),
-                                            restore_default_config);
-        if (restore_default_config) {
-          restore_default_config = false;
-          write_default_EEPROM();
-          read_EEPROM();
-        }
-      } break;
-      case 9: {
-        bool lastbutton = (!digitalRead(BUTTON_PIN));
-        u8g2.clearBuffer();                  // clear the internal memory
-        u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
-        u8g2.drawStr(0, 10,
-                     "MSC Update");  // write something to the internal memory
-        u8g2.sendBuffer();           // transfer internal memory to the display
-        delay(1000);
-        do {
-          MSC_Update.onEvent(usbEventCallback);
-          MSC_Update.begin();
-          if (lastbutton && digitalRead(BUTTON_PIN)) {
-            delay(10);
-            lastbutton = false;
-          }
-        } while (digitalRead(BUTTON_PIN) || lastbutton);
-
-        MSC_Update.end();
-      } break;
-      case 10: {
-        Serial.println(language);
-        language = MenuScreen(LanguagesItems, sizeof(LanguagesItems), language);
-        Serial.println(language);
-        repeat = false;
-      } break;
-      case 11: {
-        if(hand_side == 0){
-          u8g2.setDisplayRotation(U8G2_R3);
-          hand_side = 1;
-        }else{
-          u8g2.setDisplayRotation(U8G2_R1);
-          hand_side = 0;
-        }
-        repeat = false;
-      } break;
-      default:
-        repeat = false;
-        break;
-    }
-  }
-  updateEEPROM();
-  handleMoved = true;
-  SetTemp = SaveSetTemp;
-  setRotary(TEMP_MIN, TEMP_MAX, TEMP_STEP, SetTemp);
-}
-
-// tip settings screen 烙铁头设置屏幕
-void TipScreen() {
-  uint8_t selection = 0;
-  bool repeat = true;
-  while (repeat) {
-    selection = MenuScreen(TipItems, sizeof(TipItems), selection);
-    switch (selection) {
-      case 0:
-        ChangeTipScreen();
-        break;
-      case 1:
-        CalibrationScreen();
-        break;
-      case 2:
-        InputNameScreen();
-        break;
-      case 3:
-        DeleteTipScreen();
-        break;
-      case 4:
-        AddTipScreen();
-        break;
-      default:
-        repeat = false;
-        break;
-    }
-  }
-}
-
-// temperature settings screen 温度设置屏幕
-void TempScreen() {
-  uint8_t selection = 0;
-  bool repeat = true;
-  while (repeat) {
-    selection = MenuScreen(TempItems, sizeof(TempItems), selection);
-    switch (selection) {
-      case 0:
-        setRotary(TEMP_MIN, TEMP_MAX, TEMP_STEP, DefaultTemp);
-        DefaultTemp = InputScreen(DefaultTempItems);
-        break;
-      case 1:
-        setRotary(50, TEMP_MAX, TEMP_STEP, SleepTemp);
-        SleepTemp = InputScreen(SleepTempItems);
-        break;
-      case 2:
-        setRotary(10, 100, TEMP_STEP, BoostTemp);
-        BoostTemp = InputScreen(BoostTempItems);
-        break;
-      default:
-        repeat = false;
-        break;
-    }
-  }
-}
-
-// timer settings screen 定时器设置屏幕
-void TimerScreen() {
-  uint8_t selection = 0;
-  bool repeat = true;
-  while (repeat) {
-    selection = MenuScreen(TimerItems, sizeof(TimerItems), selection);
-    switch (selection) {
-      case 0:
-        setRotary(0, 600, 10, time2sleep);
-        time2sleep = InputScreen(SleepTimerItems);
-        break;
-      case 1:
-        setRotary(0, 60, 1, time2off);
-        time2off = InputScreen(OffTimerItems);
-        break;
-      case 2:
-        setRotary(0, 180, 10, timeOfBoost);
-        timeOfBoost = InputScreen(BoostTimerItems);
-        break;
-      case 3:
-        setRotary(0, 50, 5, WAKEUPthreshold);
-        WAKEUPthreshold = InputScreen(WAKEUPthresholdItems);
-        break;
-      default:
-        repeat = false;
-        break;
-    }
-  }
-}
-
-// menu screen 菜单屏幕
-uint8_t MenuScreen(const char *Items[][language_types], uint8_t numberOfItems,
-                   uint8_t selected) {
-  // Serial.println(numberOfItems);
-  bool isTipScreen = ((strcmp(Items[0][language], "烙铁头:") == 0) ||
-                      (strcmp(Items[0][language], "Tip:") == 0) ||
-                      (strcmp(Items[0][language], "烙鐵頭:") == 0));
-  uint8_t lastselected = selected;
-  int8_t arrow = 0;
-  if (selected) arrow = 1;
-  numberOfItems = numberOfItems / language_types;
-  numberOfItems >>= 2;
-
-  // 根据OLED控制器设置选择方向
-#if defined(SSD1306)
-  setRotary(0, numberOfItems + 3, 1, selected);
-#elif defined(SH1107)
-  setRotary(0, numberOfItems - 2, 1, selected);
-#else
-#error Wrong OLED controller type!
-#endif
-
-  bool lastbutton = (!digitalRead(BUTTON_PIN));
-
-  do {
-    selected = getRotary();
-    arrow = constrain(arrow + selected - lastselected, 0, 2);
-    lastselected = selected;
-    u8g2.firstPage();
-    do {
-      u8g2.setFont(PTS200_16);
-      u8g2.setFontPosTop();
-      u8g2.drawUTF8(0, 0 + SCREEN_OFFSET, Items[0][language]);
-      if (isTipScreen)
-        u8g2.drawUTF8(54, 0 + SCREEN_OFFSET, TipName[CurrentTip]);
-      u8g2.drawUTF8(0, 16 * (arrow + 1) + SCREEN_OFFSET, ">");
-      for (uint8_t i = 0; i < 3; i++) {
-        uint8_t drawnumber = selected + i + 1 - arrow;
-        if (drawnumber < numberOfItems)
-          u8g2.drawUTF8(12, 16 * (i + 1) + SCREEN_OFFSET,
-                        Items[selected + i + 1 - arrow][language]);
-      }
-    } while (u8g2.nextPage());
-    if (lastbutton && digitalRead(BUTTON_PIN)) {
-      delay(10);
-      lastbutton = false;
-    }
-  } while (digitalRead(BUTTON_PIN) || lastbutton);
-
-  beep();
-  return selected;
-}
-
-void MessageScreen(const char *Items[][language_types], uint8_t numberOfItems) {
-  numberOfItems = numberOfItems / language_types;
-  bool lastbutton = (!digitalRead(BUTTON_PIN));
-  u8g2.firstPage();
-  do {
-    u8g2.setFont(PTS200_16);
-    u8g2.setFontPosTop();
-    for (uint8_t i = 0; i < numberOfItems; i++)
-      u8g2.drawUTF8(0, i * 16, Items[i][language]);
-  } while (u8g2.nextPage());
-  do {
-    if (lastbutton && digitalRead(BUTTON_PIN)) {
-      delay(10);
-      lastbutton = false;
-    }
-  } while (digitalRead(BUTTON_PIN) || lastbutton);
-  beep();
-}
-
-// input value screen 输入值屏幕
-uint16_t InputScreen(const char *Items[][language_types]) {
-  uint16_t value;
-  bool lastbutton = (!digitalRead(BUTTON_PIN));
-
-  do {
-    value = getRotary();
-    u8g2.firstPage();
-    do {
-      u8g2.setFont(PTS200_16);
-      u8g2.setFontPosTop();
-      u8g2.drawUTF8(0, 0 + SCREEN_OFFSET, Items[0][language]);
-      u8g2.setCursor(0, 32);
-      u8g2.print(">");
-      u8g2.setCursor(10, 32);
-      if (value == 0)
-        u8g2.print(txt_Deactivated[language]);
-      else {
-        u8g2.print(value);
-        u8g2.print(" ");
-        u8g2.print(Items[1][language]);
-      }
-    } while (u8g2.nextPage());
-    if (lastbutton && digitalRead(BUTTON_PIN)) {
-      delay(10);
-      lastbutton = false;
-    }
-  } while (digitalRead(BUTTON_PIN) || lastbutton);
-
-  beep();
-  return value;
-}
-
-// information display screen 信息显示屏幕
-void InfoScreen() {
-  bool lastbutton = (!digitalRead(BUTTON_PIN));
-
-  do {
-    Vin = getVIN();                  // read supply voltage
-    float fVin = (float)Vin / 1000;  // convert mv in V
-    float fTmp = getChipTemp();      // read cold junction temperature
-    u8g2.firstPage();
-    do {
-      u8g2.setFont(PTS200_16);
-      u8g2.setFontPosTop();
-      u8g2.setCursor(0, 0 + SCREEN_OFFSET);
-      u8g2.print(txt_temp[language]);
-      u8g2.print(fTmp, 1);
-      u8g2.print(F(" C"));
-      u8g2.setCursor(0, 16 + SCREEN_OFFSET);
-      u8g2.print(txt_voltage[language]);
-      u8g2.print(fVin, 1);
-      u8g2.print(F(" V"));
-      u8g2.setCursor(0, 16 * 2 + SCREEN_OFFSET);
-      u8g2.print(txt_Version[language]);
-      u8g2.print(VERSION);
-    } while (u8g2.nextPage());
-    if (lastbutton && digitalRead(BUTTON_PIN)) {
-      delay(10);
-      lastbutton = false;
-    }
-  } while (digitalRead(BUTTON_PIN) || lastbutton);
-
-  beep();
-}
-
-// change tip screen 改变烙铁头屏幕
-void ChangeTipScreen() {
-  uint8_t selected = CurrentTip;
-  uint8_t lastselected = selected;
-  int8_t arrow = 0;
-  if (selected) arrow = 1;
-  setRotary(0, NumberOfTips - 1, 1, selected);
-  bool lastbutton = (!digitalRead(BUTTON_PIN));
-
-  Serial.print("selected: ");
-  Serial.println(selected);
-  Serial.print("lastselected: \n");
-  Serial.println(lastselected);
-  Serial.print("NumberOfTips: \n");
-  Serial.println(NumberOfTips);
-
-  do {
-    selected = getRotary();
-    arrow = constrain(arrow + selected - lastselected, 0, 2);
-    lastselected = selected;
-    u8g2.firstPage();
-    do {
-      u8g2.setFont(PTS200_16);
-      u8g2.setFontPosTop();
-      //      strcpy_P(F_Buffer, PSTR("选择烙铁头"));
-      u8g2.drawUTF8(0, 0 + SCREEN_OFFSET, txt_select_tip[language]);
-      u8g2.drawUTF8(0, 16 * (arrow + 1) + SCREEN_OFFSET, ">");
-      for (uint8_t i = 0; i < 3; i++) {
-        uint8_t drawnumber = selected + i - arrow;
-        if (drawnumber < NumberOfTips)
-          u8g2.drawUTF8(12, 16 * (i + 1) + SCREEN_OFFSET,
-                        TipName[selected + i - arrow]);
-      }
-    } while (u8g2.nextPage());
-    if (lastbutton && digitalRead(BUTTON_PIN)) {
-      delay(10);
-      lastbutton = false;
-    }
-  } while (digitalRead(BUTTON_PIN) || lastbutton);
-
-  beep();
-  CurrentTip = selected;
-}
-
-// temperature calibration screen 温度校准屏幕
-void CalibrationScreen() {
-  uint16_t CalTempNew[4];
-  uint16_t tempSetTemp = SetTemp;
-  for (uint8_t CalStep = 0; CalStep < 3; CalStep++) {
-    SetTemp = CalTemp[CurrentTip][CalStep];
-    Serial.print("SetTemp: ");
-    Serial.println(SetTemp);
-    setRotary(100, 500, 1, SetTemp);
-    beepIfWorky = true;
-    bool lastbutton = (!digitalRead(BUTTON_PIN));
-
-    do {
-      SENSORCheck();  // reads temperature and vibration switch of the iron
-                      // 读取烙铁头的温度和振动开关
-      Thermostat();   // heater control
-
-      u8g2.firstPage();
-      do {
-        u8g2.setFont(PTS200_16);
-        u8g2.setFontPosTop();
-        //        strcpy_P(F_Buffer, PSTR("校准"));
-        u8g2.drawUTF8(0, 0 + SCREEN_OFFSET, txt_calibrate[language]);
-        u8g2.setCursor(0, 16 + SCREEN_OFFSET);
-        u8g2.print(txt_step[language]);
-        u8g2.print(CalStep + 1);
-        u8g2.print(" of 3");
-        if (isWorky) {
-          u8g2.setCursor(0, 32 + SCREEN_OFFSET);
-          u8g2.print(txt_set_measured[language]);
-          u8g2.setCursor(0, 48 + SCREEN_OFFSET);
-          u8g2.print(txt_s_temp[language]);
-          u8g2.print(getRotary());
-        } else {
-          u8g2.setCursor(0, 32 + SCREEN_OFFSET);
-          u8g2.print(txt_temp_2[language]);
-          u8g2.print(uint16_t(RawTemp));
-          u8g2.setCursor(0, 48 + SCREEN_OFFSET);
-          u8g2.print(txt_wait_pls[language]);
-        }
-      } while (u8g2.nextPage());
-      if (lastbutton && digitalRead(BUTTON_PIN)) {
-        delay(10);
-        lastbutton = false;
-      }
-    } while (digitalRead(BUTTON_PIN) || lastbutton);
-
-    CalTempNew[CalStep] = getRotary();
-    beep();
-    delay(10);
-  }
-
-  Heater_Off();  // shut off heater 关闭加热器
-  if (VoltageValue == 3) {
-    delayMicroseconds(TIME2SETTLE_20V);
-  } else {
-    delayMicroseconds(TIME2SETTLE);  // wait for voltage to settle 等待电压稳定
-  }
-  CalTempNew[3] = getChipTemp();  // read chip temperature 读芯片温度
-  if ((CalTempNew[0] + 10 < CalTempNew[1]) &&
-      (CalTempNew[1] + 10 < CalTempNew[2])) {
-    if (MenuScreen(StoreItems, sizeof(StoreItems), 0)) {
-      for (uint8_t i = 0; i < 4; i++) CalTemp[CurrentTip][i] = CalTempNew[i];
-    }
-  }
-
-  SetTemp = tempSetTemp;
-  update_EEPROM();
-}
-
-// input tip name screen 输入烙铁头名字屏幕
-void InputNameScreen() {
-  uint8_t value;
-
-  for (uint8_t digit = 0; digit < (TIPNAMELENGTH - 1); digit++) {
-    bool lastbutton = (!digitalRead(BUTTON_PIN));
-    setRotary(31, 96, 1, 65);
-    do {
-      value = getRotary();
-      if (value == 31) {
-        value = 95;
-        setRotary(31, 96, 1, 95);
-      }
-      if (value == 96) {
-        value = 32;
-        setRotary(31, 96, 1, 32);
-      }
-      u8g2.firstPage();
-      do {
-        u8g2.setFont(PTS200_16);
-        u8g2.setFontPosTop();
-        u8g2.drawUTF8(0, 0 + SCREEN_OFFSET, txt_enter_tip_name[language]);
-        u8g2.setCursor(12 * digit, 48 + SCREEN_OFFSET);
-        u8g2.print(char(94));
-        u8g2.setCursor(0, 32 + SCREEN_OFFSET);
-        for (uint8_t i = 0; i < digit; i++) u8g2.print(TipName[CurrentTip][i]);
-        u8g2.setCursor(12 * digit, 32 + SCREEN_OFFSET);
-        u8g2.print(char(value));
-      } while (u8g2.nextPage());
-      if (lastbutton && digitalRead(BUTTON_PIN)) {
-        delay(10);
-        lastbutton = false;
-      }
-    } while (digitalRead(BUTTON_PIN) || lastbutton);
-    TipName[CurrentTip][digit] = value;
-    beep();
-    delay(10);
-  }
-  TipName[CurrentTip][TIPNAMELENGTH - 1] = 0;
-  return;
-}
-
-// delete tip screen 删除烙铁头屏幕
-void DeleteTipScreen() {
-  if (NumberOfTips == 1) {
-    MessageScreen(DeleteMessage, sizeof(DeleteMessage));
-  } else if (MenuScreen(SureItems, sizeof(SureItems), 0)) {
-    if (CurrentTip == (NumberOfTips - 1)) {
-      CurrentTip--;
-    } else {
-      for (uint8_t i = CurrentTip; i < (NumberOfTips - 1); i++) {
-        for (uint8_t j = 0; j < TIPNAMELENGTH; j++)
-          TipName[i][j] = TipName[i + 1][j];
-        for (uint8_t j = 0; j < 4; j++) CalTemp[i][j] = CalTemp[i + 1][j];
-      }
-    }
-    NumberOfTips--;
-  }
-}
-
-// add new tip screen 添加新的烙铁头屏幕
-void AddTipScreen() {
-  if (NumberOfTips < TIPMAX) {
-    CurrentTip = NumberOfTips++;
-    InputNameScreen();
-    CalTemp[CurrentTip][0] = TEMP200;
-    CalTemp[CurrentTip][1] = TEMP280;
-    CalTemp[CurrentTip][2] = TEMP360;
-    CalTemp[CurrentTip][3] = TEMPCHP;
-  } else
-    MessageScreen(MaxTipMessage, sizeof(MaxTipMessage));
-}
 
 // 对32个ADC读数进行平均以降噪
 //  VP+_Ru = 100k, Rd_GND = 1K
@@ -1158,50 +531,6 @@ uint16_t denoiseAnalog(byte port) {
   return (result / 4);  // devide by 32 and return value 除以32并返回值
 }
 
-// 读取SENSOR内部温度
-double getChipTemp() {
-#if defined(MPU)
-  mpu6050.update();
-  int16_t Temp = mpu6050.getTemp();
-#elif defined(LIS)
-  int16_t Temp = accel.getTemperature();
-#endif
-
-  return Temp;
-}
-
-// get LIS/MPU temperature 获取LIS/MPU的温度
-float getMPUTemp() {
-#if defined(MPU)
-  mpu6050.update();
-  int16_t Temp = mpu6050.getTemp();
-#elif defined(LIS)
-  int16_t Temp = accel.getTemperature();
-#endif
-
-  return Temp;
-}
-
-// get supply voltage in mV 得到以mV为单位的电源电压
-uint16_t getVIN() {
-  long value;
-  long voltage;
-  long result = 0;
-
-  for (uint8_t i = 0; i < 4; i++) {  // get 32 readings 得到32个读数
-    //    long val = analogRead(VIN_PIN);
-    long val = adc_vin.readMiliVolts();
-
-    result += val;  // add them up 把它们加起来
-  }
-
-  value = (result / 4);
-
-  voltage = value * 31.3;
-
-  return voltage;
-}
-
 int32_t variance(int16_t a[]) {
   // Compute mean (average of elements)计算平均值(元素的平均值)
   int32_t sum = 0;
@@ -1214,138 +543,7 @@ int32_t variance(int16_t a[]) {
   return (int32_t)sqDiff / 32;
 }
 
-unsigned int Button_Time1 = 0, Button_Time2 = 0;
 
-void Button_loop() {
-  if (!digitalRead(BUTTON_N_PIN) && a0 == 1) {
-    delay(BUTTON_DELAY);
-    if (!digitalRead(BUTTON_N_PIN)) {
-      int count0 = count;
-      count = constrain(count + countStep, countMin, countMax);
-      if (!(countMin == TEMP_MIN && countMax == TEMP_MAX)) {
-        if (count0 + countStep > countMax) {
-          count = countMin;
-        }
-      }
-      a0 = 0;
-    }
-  } else if (!digitalRead(BUTTON_N_PIN) && a0 == 0) {
-    delay(BUTTON_DELAY);
-    if (Button_Time1 > 10)  // 这里的数越大，需要长按时间更长
-      count = constrain(count + countStep, countMin, countMax);
-    else
-      Button_Time1++;
-  } else if (digitalRead(BUTTON_N_PIN)) {
-    Button_Time1 = 0;
-    a0 = 1;
-  }
-
-  if (!digitalRead(BUTTON_P_PIN) && b0 == 1) {
-    delay(BUTTON_DELAY);
-    if (!digitalRead(BUTTON_P_PIN)) {
-      int count0 = count;
-      count = constrain(count - countStep, countMin, countMax);
-      if (!(countMin == TEMP_MIN && countMax == TEMP_MAX)) {
-        if (count0 - countStep < countMin) {
-          count = countMax;
-        }
-      }
-      b0 = 0;
-    }
-  } else if (!digitalRead(BUTTON_P_PIN) && b0 == 0) {
-    delay(BUTTON_DELAY);
-    if (Button_Time2 > 10)  // 这里的数越大，需要长按时间更长
-      count = constrain(count - countStep, countMin, countMax);
-    else
-      Button_Time2++;
-  } else if (digitalRead(BUTTON_P_PIN)) {
-    Button_Time2 = 0;
-    b0 = 1;
-  }
-}
-
-static void usbEventCallback(void *arg, esp_event_base_t event_base,
-                             int32_t event_id, void *event_data) {
-  if (event_base == ARDUINO_USB_EVENTS) {
-    switch (event_id) {
-      case ARDUINO_USB_STARTED_EVENT:
-        u8g2.clearBuffer();                  // clear the internal memory
-        u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
-        u8g2.drawStr(0, 10,
-                     "USB PLUGGED");  // write something to the internal memory
-        u8g2.sendBuffer();            // transfer internal memory to the display
-        break;
-      case ARDUINO_USB_STOPPED_EVENT:
-        u8g2.clearBuffer();                  // clear the internal memory
-        u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
-        u8g2.drawStr(
-            0, 10, "USB UNPLUGGED");  // write something to the internal memory
-        u8g2.sendBuffer();            // transfer internal memory to the display
-        break;
-      case ARDUINO_USB_SUSPEND_EVENT:
-        u8g2.clearBuffer();                  // clear the internal memory
-        u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
-        u8g2.drawStr(
-            0, 10, "USB SUSPENDED");  // write something to the internal memory
-        u8g2.sendBuffer();            // transfer internal memory to the display
-        break;
-      case ARDUINO_USB_RESUME_EVENT:
-        u8g2.clearBuffer();                  // clear the internal memory
-        u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
-        u8g2.drawStr(0, 10,
-                     "USB RESUMED");  // write something to the internal memory
-        u8g2.sendBuffer();            // transfer internal memory to the display
-        break;
-
-      default:
-        break;
-    }
-  } else if (event_base == ARDUINO_FIRMWARE_MSC_EVENTS) {
-    switch (event_id) {
-      case ARDUINO_FIRMWARE_MSC_START_EVENT:
-        u8g2.clearBuffer();                  // clear the internal memory
-        u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
-        u8g2.drawStr(
-            0, 10,
-            "MSC Update Start");  // write something to the internal memory
-        u8g2.sendBuffer();        // transfer internal memory to the display
-        break;
-      case ARDUINO_FIRMWARE_MSC_WRITE_EVENT:
-        u8g2.clearBuffer();                  // clear the internal memory
-        u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
-        u8g2.drawStr(0, 10,
-                     "MSC Updating");  // write something to the internal memory
-        u8g2.sendBuffer();  // transfer internal memory to the display
-        break;
-      case ARDUINO_FIRMWARE_MSC_END_EVENT:
-        u8g2.clearBuffer();                  // clear the internal memory
-        u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
-        u8g2.drawStr(
-            0, 10, "MSC Update End");  // write something to the internal memory
-        u8g2.sendBuffer();  // transfer internal memory to the display
-        break;
-      case ARDUINO_FIRMWARE_MSC_ERROR_EVENT:
-        u8g2.clearBuffer();                  // clear the internal memory
-        u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
-        u8g2.drawStr(
-            0, 10,
-            "MSC Update ERROR!");  // write something to the internal memory
-        u8g2.sendBuffer();         // transfer internal memory to the display
-        break;
-      case ARDUINO_FIRMWARE_MSC_POWER_EVENT:
-        u8g2.clearBuffer();                  // clear the internal memory
-        u8g2.setFont(u8g2_font_ncenB08_tr);  // choose a suitable font
-        u8g2.drawStr(
-            0, 10,
-            "MSC Update Power");  // write something to the internal memory
-        u8g2.sendBuffer();        // transfer internal memory to the display
-        break;
-
-      default:
-        break;
-    }
-  }
-}
 
 void turnOffHeater(Button2 &b) { inOffMode = true; }
 

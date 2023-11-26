@@ -5,23 +5,9 @@
 #define VERSION "v4.5.0" //20230729
 #define VERSION_NUM 422
 
-// Type of OLED Controller
-// #define SSD1306
-#define SH1107
-//typedef u8g2_uint_t u8g_uint_t;
-#define SCREEN_OFFSET     3
-
-// 旋转编码器的类型
-#define ROTARY_TYPE       0     // 0: 2 increments/step; 1: 4 increments/step (default)
-#define BUTTON_DELAY      5
-
 // Pins
 #define SENSOR_PIN        1     // tip temperature sense 烙铁头温感
-#define VIN_PIN           6     // input voltage sense 检测输入电压
-#define BUZZER_PIN        3     // buzzer 蜂鸣器
-#define BUTTON_PIN        0     // switch 按键right
-#define BUTTON_P_PIN      4     // 1 键位为“+”
-#define BUTTON_N_PIN      2     // 2 键位为“-”
+
 
 // 默认温度控制值(推荐焊接温度:300~380°C)
 #define TEMP_MIN          50    // 最小温度
